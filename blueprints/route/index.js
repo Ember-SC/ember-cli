@@ -1,11 +1,33 @@
-var Blueprint   = require('../../lib/models/blueprint');
 var SilentError = require('../../lib/errors/silent');
 var fs          = require('fs-extra');
 var inflection  = require('inflection');
 var path        = require('path');
 var EOL         = require('os').EOL;
 
-module.exports = Blueprint.extend({
+module.exports = {
+  description: 'Generates a route and registers it with the router.',
+
+  availableOptions: [
+    { name: 'type', values: ['route', 'resource'], default: 'route' }
+  ],
+  
+  fileMapTokens: function() {
+    return {
+      __templatepath__: function(options) {
+        if (options.pod) {
+          return options.podPath+options.dasherizedModuleName;
+        }
+        return 'templates';
+      },
+      __templatename__: function(options) {
+        if (options.pod) {
+          return 'template';
+        }
+        return options.dasherizedModuleName;
+      }
+    };
+  },
+
   beforeInstall: function(options) {
     var type = options.type;
 
@@ -14,11 +36,18 @@ module.exports = Blueprint.extend({
     }
   },
 
+  shouldTouchRouter: function(name) {
+    var isIndex = /index$/.test(name);
+    var isBasic = name === 'basic';
+    var isApplication = name === 'application';
+
+    return !isBasic && !isIndex && !isApplication;
+  },
+
   afterInstall: function(options) {
     var entity  = options.entity;
-    var isIndex = /index$/.test(entity.name);
 
-    if (!isIndex && !options.dryRun) {
+    if (this.shouldTouchRouter(entity.name) && !options.dryRun) {
       addRouteToRouter(entity.name, {
         type: options.type
       });
@@ -35,15 +64,14 @@ module.exports = Blueprint.extend({
 
   afterUninstall: function(options) {
     var entity  = options.entity;
-    var isIndex = /index$/.test(entity.name);
 
-    if (!isIndex && !options.dryRun) {
+    if (this.shouldTouchRouter(entity.name) && !options.dryRun) {
       removeRouteFromRouter(entity.name, {
         type: options.type
       });
     }
   }
-});
+};
 
 function removeRouteFromRouter(name, options) {
   var type       = options.type || 'route';
@@ -56,8 +84,6 @@ function removeRouteFromRouter(name, options) {
   if (!existence.test(oldContent)) {
     return;
   }
-
-  if (name === 'basic') { return; }
 
   switch (type) {
   case 'route':
@@ -92,8 +118,6 @@ function addRouteToRouter(name, options) {
     return;
   }
 
-  if (name === 'basic') { return; }
-
   switch (type) {
   case 'route':
     newContent = oldContent.replace(
@@ -112,7 +136,7 @@ function addRouteToRouter(name, options) {
     } else {
       newContent = oldContent.replace(
         /(map\(function\(\) {[\s\S]+)}\)/,
-        "$1  this.resource('" + name + "', { path: '" + plural + "/:" + name + "_id' });" + EOL + "})"
+        "$1  this.resource('" + name + "', { path: '" + plural + "/:" + name + "_id' }, function() { });" + EOL + "})"
       );
     }
     break;

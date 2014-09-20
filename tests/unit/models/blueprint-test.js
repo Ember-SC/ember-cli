@@ -6,10 +6,10 @@ var Task              = require('../../../lib/models/task');
 var MockProject       = require('../../helpers/mock-project');
 var MockUI            = require('../../helpers/mock-ui');
 var assert            = require('assert');
-var glob              = require('glob');
 var path              = require('path');
 var walkSync          = require('walk-sync');
-var rimraf            = require('rimraf');
+var Promise           = require('../../../lib/ext/promise');
+var rimraf            = Promise.denodeify(require('rimraf'));
 var EOL               = require('os').EOL;
 var root              = process.cwd();
 var tmp               = require('tmp-sync');
@@ -53,6 +53,35 @@ describe('Blueprint', function() {
       path = Blueprint.prototype.mapFile('__name__/__name__.js',{dasherizedModuleName: 'my-blueprint'});
       assert.equal(path,'my-blueprint/my-blueprint.js');
     });
+    it('accepts locals.fileMap with multiple mappings',function(){
+      var locals = {};
+      locals.fileMap= {
+        __name__: 'user',
+        __type__: 'controller',
+        __path__: 'pods/users',
+        __plural__: ''
+      };
+
+      var path = Blueprint.prototype.mapFile('__name__/__type____plural__.js',locals);
+      assert.equal(path,'user/controller.js');
+
+      path = Blueprint.prototype.mapFile('__path__/__name__/__type__.js',locals);
+      assert.equal(path,'pods/users/user/controller.js');
+    });
+  });
+  describe('.fileMapTokens', function() {
+    it('adds additional tokens from fileMapTokens hook', function() {
+      var blueprint = Blueprint.lookup(basicBlueprint);
+      blueprint.fileMapTokens = function() {
+        return {
+          __foo__: function(){
+            return 'foo';
+          }
+        };
+      };
+      var tokens = blueprint._fileMapTokens();
+      assert.equal(tokens.__foo__(), 'foo');
+    });
   });
   describe('.lookup', function() {
     it('uses an explicit path if one is given', function() {
@@ -77,7 +106,7 @@ describe('Blueprint', function() {
 
     it('finds blueprints in the ember-cli package', function() {
       var expectedPath = path.resolve(defaultBlueprints, 'app');
-      var expectedClass = require('../../../blueprints/app');
+      var expectedClass = Blueprint;
 
       var blueprint = Blueprint.lookup('app');
 
@@ -100,26 +129,42 @@ describe('Blueprint', function() {
         Blueprint.lookup('foo');
       }, 'Unknown blueprint: foo');
     });
+
+    it('returns undefined if no blueprint is found and ignoredMissing is passed', function() {
+      var blueprint = Blueprint.lookup('foo', {
+        ignoreMissing: true
+      });
+
+      assert.equal(blueprint, undefined);
+    });
   });
 
   describe('.list', function() {
     it('returns a list of blueprints grouped by lookup path', function() {
-      var expectedDefaults = glob.sync(path.join(defaultBlueprints, '*'));
-      expectedDefaults = expectedDefaults.map(function(blueprint) {
-        return path.basename(blueprint);
-      });
-      var expectedFixtures = glob.sync(path.join(fixtureBlueprints, '*'));
-      expectedFixtures = expectedFixtures.map(function(blueprint) {
-        return path.basename(blueprint);
-      });
-
-      assert.deepEqual(Blueprint.list({ paths: [fixtureBlueprints] }), [{
+      var list = Blueprint.list({ paths: [fixtureBlueprints] });
+      var actual = list[0];
+      var expected = {
         source: 'fixtures',
-        blueprints: expectedFixtures
-      }, {
-        source: 'ember-cli',
-        blueprints: expectedDefaults
-      }]);
+        blueprints: [{
+          name: 'basic',
+          description: 'A basic blueprint',
+          overridden: false
+        }, {
+          name: 'basic_2',
+          description: 'Another basic blueprint',
+          overridden: false
+        }, {
+          name: 'exporting-object',
+          description: 'A blueprint that exports an object',
+          overridden: false
+        }, {
+          name: 'with-templating',
+          description: 'A blueprint with templating',
+          overridden: false
+        }]
+      };
+
+      assert.deepEqual(actual[0], expected[0]);
     });
   });
 
@@ -153,7 +198,7 @@ describe('Blueprint', function() {
     });
 
     afterEach(function() {
-      rimraf.sync(tmproot);
+      return rimraf(tmproot);
     });
 
     it('installs basic files', function() {
@@ -232,7 +277,9 @@ describe('Blueprint', function() {
         })
         .then(function() {
           var actualFiles = walkSync(tmpdir).sort();
-          var output = ui.output.trim().split(EOL);
+          // Prompts contain \n EOL
+          // Split output on \n since it will have the same affect as spliting on OS specific EOL
+          var output = ui.output.trim().split('\n');
           assert.match(output.shift(), /^installing/);
           assert.match(output.shift(), /Overwrite.*foo.*\?/); // Prompt
           assert.match(output.shift(), /Overwrite.*foo.*No, skip/);
@@ -282,7 +329,9 @@ describe('Blueprint', function() {
           })
           .then(function() {
             var actualFiles = walkSync(tmpdir).sort();
-            var output = ui.output.trim().split(EOL);
+            // Prompts contain \n EOL
+            // Split output on \n since it will have the same affect as spliting on OS specific EOL
+            var output = ui.output.trim().split('\n');
             assert.match(output.shift(), /^installing/);
             assert.match(output.shift(), /Overwrite.*test.*\?/); // Prompt
             assert.match(output.shift(), /Overwrite.*test.*No, skip/);
@@ -362,7 +411,7 @@ describe('Blueprint', function() {
     });
 
     afterEach(function() {
-      rimraf.sync(tmproot);
+      return rimraf(tmproot);
     });
 
     it('calls _exec with the proper command when no version is supplied', function() {
@@ -424,7 +473,7 @@ describe('Blueprint', function() {
     });
 
     afterEach(function() {
-      rimraf.sync(tmproot);
+      return rimraf(tmproot);
     });
 
     it('looks up the `bower-install` task', function() {
@@ -500,7 +549,7 @@ describe('Blueprint', function() {
     });
 
     afterEach(function() {
-      rimraf.sync(tmproot);
+      return rimraf(tmproot);
     });
 
     it('will create the file if not already existing', function() {
@@ -562,6 +611,46 @@ describe('Blueprint', function() {
           assert.equal(contents, toInsert + toInsert, 'contents should be unchanged');
           assert(result.inserted, 'inserted should indicate that the file was not modified');
         });
+    });
+  });
+
+  describe('lookupBlueprint', function() {
+    var blueprint;
+    var ui;
+    var tmpdir;
+    var project;
+    var filename;
+
+    beforeEach(function() {
+      tmpdir    = tmp.in(tmproot);
+      blueprint = new Blueprint(basicBlueprint);
+      ui        = new MockUI();
+      project   = new MockProject();
+
+      // normally provided by `install`, but mocked here for testing
+      project.root = tmpdir;
+      blueprint.project = project;
+      project.blueprintLookupPaths = function() {
+        return [fixtureBlueprints];
+      };
+
+      filename = 'foo-bar-baz.txt';
+    });
+
+    afterEach(function() {
+      return rimraf(tmproot);
+    });
+
+    it('can lookup other Blueprints from the project blueprintLookupPaths', function() {
+      var result = blueprint.lookupBlueprint('basic_2');
+
+      assert.equal(result.description, 'Another basic blueprint');
+    });
+
+    it('can find internal blueprints', function() {
+      var result = blueprint.lookupBlueprint('controller');
+
+      assert.equal(result.description, 'Generates a controller of the given type.');
     });
   });
 });

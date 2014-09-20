@@ -12,66 +12,121 @@ var emberCLIVersion = require('../../../lib/utilities/ember-cli-version');
 describe('models/project.js', function() {
   var project, projectPath;
 
-  describe('Project.prototype.config default', function() {
+  describe('Project.prototype.config', function() {
     var called      = false;
-    projectPath = process.cwd() + '/tmp/test-app';
 
-    before(function() {
-      tmp.setup(projectPath);
+    beforeEach(function() {
+      projectPath = process.cwd() + '/tmp/test-app';
+      called = false;
+      return tmp.setup(projectPath)
+        .then(function() {
+          touch(projectPath + '/config/environment.js', {
+            baseURL: '/foo/bar'
+          });
 
-      touch(projectPath + '/config/environment.js', {
-        baseURL: '/foo/bar'
-      });
-
-      project = new Project(projectPath, { });
-      project.require = function() {
-        called = true;
-        return function() {};
-      };
-
+          project = new Project(projectPath, { });
+          project.require = function() {
+            called = true;
+            return function() {};
+          };
+        });
     });
 
     after(function() {
-      tmp.teardown(projectPath);
+      return tmp.teardown(projectPath);
     });
 
     it('config() finds and requires config/environment', function() {
       project.config('development');
       assert.equal(called, true);
     });
-  });
 
-  describe('Project.prototype.config custom config path from addon', function() {
-    var called      = false;
-    projectPath = process.cwd() + '/tmp/test-app';
-
-    before(function() {
-      tmp.setup(projectPath);
-
-      touch(projectPath + '/tests/dummy/config/environment.js', {
-        baseURL: '/foo/bar'
-      });
-
-      project = new Project(projectPath, { });
+    it('configPath() returns tests/dummy/config/environment', function() {
       project.pkg = {
         'ember-addon': {
           'configPath': 'tests/dummy/config'
         }
       };
-      project.require = function() {
-        called = true;
-        return function() {};
+
+      var expected = path.normalize('tests/dummy/config/environment');
+
+      assert.equal(project.configPath(), expected);
+    });
+
+    it('calls getAddonsConfig', function() {
+      var addonConfigCalled = false;
+
+      project.getAddonsConfig = function() {
+        addonConfigCalled = true;
+
+        return {};
       };
 
-    });
-
-    after(function() {
-      tmp.teardown(projectPath);
-    });
-
-    it('config() finds and requires tests/dummy/config/environment', function() {
       project.config('development');
-      assert.equal(called, true);
+      assert.equal(addonConfigCalled, true);
+    });
+    
+    it('returns getAddonsConfig result when configPath is not present', function() {
+      var expected = {
+        foo: 'bar'
+      };
+
+      return tmp.setup(projectPath) // ensure no config/environment.js is present
+        .then(function() {
+          project.getAddonsConfig = function() {
+            return expected;
+          };
+
+          var actual = project.config('development');
+          assert.deepEqual(actual, expected);
+        });
+    });
+
+    describe('merges getAddonsConfig result with app config', function() {
+      var projectConfig, addonsConfig;
+
+      beforeEach(function() {
+        addonsConfig  = { addon: { derp: 'herp' } };
+        projectConfig = { foo: 'bar', baz: 'qux' };
+
+        project.getAddonsConfig = function() {
+          return addonsConfig;
+        };
+
+        project.require = function() {
+          return function() {
+            return projectConfig;
+          };
+        };
+      });
+
+      it('merges getAddonsConfig result with app config', function() {
+        var expected = {
+          foo: 'bar',
+          baz: 'qux',
+          addon: {
+            derp: 'herp'
+          }
+        };
+
+        var actual = project.config('development');
+        assert.deepEqual(actual, expected);
+      });
+
+      it('getAddonsConfig does NOT override project config', function() {
+        var expected = {
+          foo: 'bar',
+          baz: 'qux',
+          addon: {
+            derp: 'herp'
+          }
+        };
+
+        addonsConfig.foo = 'NO!!!!!!';
+
+        var actual = project.config('development');
+        assert.deepEqual(actual, expected);
+      });
     });
   });
 

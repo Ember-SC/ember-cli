@@ -83,6 +83,40 @@ describe('express-server', function() {
   });
 
   describe('behaviour', function() {
+    it('app middlewares are processed before the proxy', function(done) {
+      var expected = '/foo was hit';
+
+      project.require = function() {
+        return function(app) {
+          app.use('/foo', function(req,res) {
+            res.send(expected);
+          });
+        };
+      };
+
+      subject.start({
+        proxy: 'http://localhost:3001/',
+        host:  '0.0.0.0',
+        port: '1337',
+        baseURL: '/'
+      })
+      .then(function() {
+        request(subject.app)
+          .get('/foo')
+          .set('accept', 'application/json, */*')
+          .expect(function(res) {
+            assert.equal(res.text, expected);
+          })
+          .end(function(err) {
+            if (err) {
+              return done(err);
+            }
+            assert(!proxy.called);
+            done();
+          });
+      });
+    });
+
     describe('with proxy', function() {
       beforeEach(function() {
         return subject.start({
@@ -113,7 +147,7 @@ describe('express-server', function() {
 
       it('bypasses proxy for files that exist', function(done) {
         bypassTest(subject.app, '/test-file.txt', done, function(response) {
-          assert.equal(response.text, 'some contents' + EOL);
+          assert.equal(response.text.trim(), 'some contents');
         });
       });
 
@@ -240,7 +274,7 @@ describe('express-server', function() {
             request(subject.app)
             .get('/test-file.txt')
             .end(function(err, response) {
-              assert.equal(response.text, 'some contents' + EOL);
+              assert.equal(response.text.trim(), 'some contents');
               done();
             });
           });
@@ -257,7 +291,7 @@ describe('express-server', function() {
                   return done(err);
                 }
 
-                assert.equal(response.text, 'some other content' + EOL);
+                assert.equal(response.text.trim(), 'some other content');
 
                 done();
               });
@@ -275,7 +309,7 @@ describe('express-server', function() {
                   return done(err);
                 }
 
-                assert.equal(response.text, 'some other content' + EOL);
+                assert.equal(response.text.trim(), 'some other content');
 
                 done();
               });

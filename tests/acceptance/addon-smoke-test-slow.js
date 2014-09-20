@@ -13,8 +13,14 @@ var ncp        = Promise.denodeify(require('ncp'));
 var EOL        = require('os').EOL;
 
 var runCommand       = require('../helpers/run-command');
+var buildApp         = require('../helpers/build-app');
+var copyFixtureFiles = require('../helpers/copy-fixture-files');
 
 function assertTmpEmpty() {
+  if (!fs.existsSync('tmp')) {
+    return;
+  }
+
   var paths = walkSync('tmp')
     .filter(function(path) {
       return !path.match(/output\//);
@@ -23,65 +29,69 @@ function assertTmpEmpty() {
   assert(paths.length === 0, 'tmp/ should be empty after `ember` tasks. Contained: ' + paths.join(EOL));
 }
 
-function buildAddon(addonName) {
-  return runCommand(path.join('..', 'bin', 'ember'), 'addon', addonName, {
-    onOutput: function() {
-      return; // no output for initial application build
-    }
-  })
-  .catch(function(result) {
-    console.log(result.output.join('\n'));
-    console.log(result.errors.join('\n'));
-
-    throw result;
-  });
-}
-
 describe('Acceptance: addon-smoke-test', function() {
   before(function() {
     this.timeout(360000);
 
-    tmp.setup('./common-tmp');
-    process.chdir('./common-tmp');
-
-    conf.setup();
-    return buildAddon(addonName)
+    return tmp.setup('./common-tmp')
       .then(function() {
-        return rimraf(path.join(addonName, 'node_modules', 'ember-cli'));
+        process.chdir('./common-tmp');
+
+        conf.setup();
+        return buildApp(addonName, {
+          command: 'addon'
+        })
+          .then(function() {
+            return rimraf(path.join(addonName, 'node_modules', 'ember-cli'));
+          });
       });
   });
 
   after(function() {
-    this.timeout(10000);
+    this.timeout(15000);
 
-    tmp.teardown('./common-tmp');
-    conf.restore();
+    return tmp.teardown('./common-tmp')
+      .then(function() {
+        conf.restore();
+      });
   });
 
   beforeEach(function() {
-    this.timeout(10000);
-    tmp.setup('./tmp');
-    return ncp('./common-tmp/' + addonName, './tmp/' + addonName, {
-      clobber: true,
-      stopOnErr: true
-    })
-    .then(function() {
-      process.chdir('./tmp');
+    this.timeout(15000);
 
-      var appsECLIPath = path.join(addonName, 'node_modules', 'ember-cli');
-      var pwd = process.cwd();
+    return tmp.setup('./tmp')
+      .then(function() {
+        return ncp('./common-tmp/' + addonName, './tmp/' + addonName, {
+          clobber: true,
+          stopOnErr: true
+        });
+      })
+      .then(function() {
+        process.chdir('./tmp');
 
-      fs.symlinkSync(path.join(pwd, '..'), appsECLIPath);
+        var appsECLIPath = path.join(addonName, 'node_modules', 'ember-cli');
+        var pwd = process.cwd();
 
-      process.chdir(addonName);
-    });
+        fs.symlinkSync(path.join(pwd, '..'), appsECLIPath);
+
+        process.chdir(addonName);
+      });
   });
 
   afterEach(function() {
-    this.timeout(10000);
+    this.timeout(15000);
 
     assertTmpEmpty();
-    tmp.teardown('./tmp');
+    return tmp.teardown('./tmp');
+  });
+
+  it('uses the correct name in generated package.json', function() {
+    console.log('    running the slow end-to-end it will take some time');
+
+    var contents = JSON.parse(fs.readFileSync('package.json', { encoding: 'utf8' }));
+
+    assert.equal(contents.name, addonName);
+    assert.equal(contents.private, undefined);
   });
 
   it('ember addon foo, clean from scratch', function() {
@@ -90,6 +100,37 @@ describe('Acceptance: addon-smoke-test', function() {
     this.timeout(450000);
 
     return runCommand(path.join('.', 'node_modules', 'ember-cli', 'bin', 'ember'), 'test');
+  });
+
+  it('ember addon without addon/ directory', function() {
+    console.log('    running the slow end-to-end it will take some time');
+
+    this.timeout(450000);
+
+    return rimraf('addon')
+      .then(function() {
+        return runCommand(path.join('.', 'node_modules', 'ember-cli', 'bin', 'ember'), 'server', '--port=54323','--live-reload=false', {
+          onOutput: function(string, process) {
+            if (string.match(/Build successful/)) {
+              process.kill('SIGINT');
+            }
+          }
+        })
+        .catch(function() {
+          // just eat the rejection as we are testing what happens
+        });
+      });
+  });
+
+  it('can render a component with a manually imported template', function() {
+    console.log('    running the slow end-to-end it will take some time');
+
+    this.timeout(450000);
+
+    return copyFixtureFiles('addon/component-with-template')
+      .then(function() {
+        return runCommand(path.join('.', 'node_modules', 'ember-cli', 'bin', 'ember'), 'test');
+      });
   });
 
 });

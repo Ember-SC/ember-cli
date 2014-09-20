@@ -10,7 +10,7 @@ var ember            = require('../helpers/ember');
 var fs               = require('fs-extra');
 var outputFile       = Promise.denodeify(fs.outputFile);
 var path             = require('path');
-var rimraf           = require('rimraf');
+var rimraf           = Promise.denodeify(require('rimraf'));
 var root             = process.cwd();
 var tmp              = require('tmp-sync');
 var tmproot          = path.join(root, 'tmp');
@@ -36,7 +36,7 @@ describe('Acceptance: ember generate', function() {
     this.timeout(10000);
 
     process.chdir(root);
-    rimraf.sync(tmproot);
+    return rimraf(tmproot);
   });
 
   function initApp() {
@@ -278,7 +278,7 @@ describe('Acceptance: ember generate', function() {
   it('route foo --type=resource', function() {
     return generate(['route', 'foo', '--type=resource']).then(function() {
       assertFile('app/router.js', {
-        contains: "this.resource('foo', { path: 'foos/:foo_id' });"
+        contains: "this.resource('foo', { path: 'foos/:foo_id' }, function() { });"
       });
     });
   });
@@ -295,6 +295,23 @@ describe('Acceptance: ember generate', function() {
     return generate(['route', 'index']).then(function() {
       assertFile('app/router.js', {
         doesNotContain: "this.route('index');"
+      });
+    });
+  });
+
+  it('route application', function() {
+    // need to run `initApp` manually here instead of using `generate` helper
+    // because we need to remove the templates/application.hbs file to prevent
+    // a prompt (due to a conflict)
+    return initApp().then(function() {
+      return rimraf(path.join('app', 'templates', 'application.hbs'));
+    })
+    .then(function() {
+      return ember(['generate', 'route', 'application']);
+    })
+    .then(function() {
+      assertFile('app/router.js', {
+        doesNotContain: "this.route('application');"
       });
     });
   });
@@ -398,7 +415,7 @@ describe('Acceptance: ember generate', function() {
   it('resource foo', function() {
     return generate(['resource', 'foo']).then(function() {
       assertFile('app/router.js', {
-        contains: "this.resource('foo', { path: 'foos/:foo_id' });"
+        contains: "this.resource('foo', { path: 'foos/:foo_id' }, function() { });"
       });
       assertFile('app/models/foo.js', {
         contains: 'export default DS.Model.extend'
@@ -444,26 +461,34 @@ describe('Acceptance: ember generate', function() {
   it('initializer foo', function() {
     return generate(['initializer', 'foo']).then(function() {
       assertFile('app/initializers/foo.js', {
-        contains: "export default {" + EOL +
+        contains: "export var initialize = function(/* container, app */) {" + EOL +
+                  "  // app.register('route', 'foo', 'service:foo');" + EOL +
+                  "};" + EOL +
+                  "" + EOL+
+                  "export default {" + EOL +
                   "  name: 'foo'," + EOL + EOL +
-                  "  initialize: function(/* container, app */) {" + EOL +
-                  "    // app.register('route', 'foo', 'service:foo');" + EOL +
-                  "  }" + EOL +
+                  "  initialize: initialize" + EOL +
                   "};"
       });
+
+      assertFile('tests/unit/initializers/foo-test.js');
     });
   });
 
   it('initializer foo/bar', function() {
     return generate(['initializer', 'foo/bar']).then(function() {
       assertFile('app/initializers/foo/bar.js', {
-        contains: "export default {" + EOL +
+        contains: "export var initialize = function(/* container, app */) {" + EOL +
+                  "  // app.register('route', 'foo', 'service:foo');" + EOL +
+                  "};" + EOL +
+                  "" + EOL+
+                  "export default {" + EOL +
                   "  name: 'foo/bar'," + EOL + EOL +
-                  "  initialize: function(/* container, app */) {" + EOL +
-                  "    // app.register('route', 'foo', 'service:foo');" + EOL +
-                  "  }" + EOL +
+                  "  initialize: initialize" + EOL +
                   "};"
       });
+
+      assertFile('tests/unit/initializers/foo/bar-test.js');
     });
   });
 
@@ -773,6 +798,8 @@ describe('Acceptance: ember generate', function() {
     return generate(['blueprint', 'foo']).then(function() {
       assertFile('blueprints/foo/index.js', {
         contains: "module.exports = {" + EOL +
+                  "  description: ''"+ EOL +
+                  EOL +
                   "  // locals: function(options) {" + EOL +
                   "  //   // Return custom template variables here." + EOL +
                   "  //   return {" + EOL +
@@ -792,6 +819,8 @@ describe('Acceptance: ember generate', function() {
     return generate(['blueprint', 'foo/bar']).then(function() {
       assertFile('blueprints/foo/bar/index.js', {
         contains: "module.exports = {" + EOL +
+                  "  description: ''"+ EOL +
+                  EOL +
                   "  // locals: function(options) {" + EOL +
                   "  //   // Return custom template variables here." + EOL +
                   "  //   return {" + EOL +

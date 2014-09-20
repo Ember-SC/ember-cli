@@ -14,6 +14,7 @@ var ncp      = Promise.denodeify(require('ncp'));
 var EOL      = require('os').EOL;
 
 var runCommand       = require('../helpers/run-command');
+var buildApp         = require('../helpers/build-app');
 var copyFixtureFiles = require('../helpers/copy-fixture-files');
 
 function assertTmpEmpty() {
@@ -25,66 +26,58 @@ function assertTmpEmpty() {
   assert(paths.length === 0, 'tmp/ should be empty after `ember` tasks. Contained: ' + paths.join(EOL));
 }
 
-function buildApp(appName) {
-  return runCommand(path.join('..', 'bin', 'ember'), 'new', appName, {
-    onOutput: function() {
-      return; // no output for initial application build
-    }
-  })
-  .catch(function(result) {
-    console.log(result.output.join('\n'));
-    console.log(result.errors.join('\n'));
-
-    throw result;
-  });
-}
-
 describe('Acceptance: smoke-test', function() {
   before(function() {
     this.timeout(360000);
 
-    tmp.setup('./common-tmp');
-    process.chdir('./common-tmp');
-
-    conf.setup();
-    return buildApp(appName)
+    return tmp.setup('./common-tmp')
       .then(function() {
-        return rimraf(path.join(appName, 'node_modules', 'ember-cli'));
+        process.chdir('./common-tmp');
+
+        conf.setup();
+        return buildApp(appName)
+          .then(function() {
+            return rimraf(path.join(appName, 'node_modules', 'ember-cli'));
+          });
       });
   });
 
   after(function() {
     this.timeout(10000);
 
-    tmp.teardown('./common-tmp');
-    conf.restore();
+    return tmp.teardown('./common-tmp')
+      .then(function() {
+        conf.restore();
+      });
   });
 
   beforeEach(function() {
     this.timeout(10000);
 
-    tmp.setup('./tmp');
-    return ncp('./common-tmp/' + appName, './tmp/' + appName, {
-      clobber: true,
-      stopOnErr: true
-    })
-    .then(function() {
-      process.chdir('./tmp');
+    return tmp.setup('./tmp')
+      .then(function() {
+        return ncp('./common-tmp/' + appName, './tmp/' + appName, {
+          clobber: true,
+          stopOnErr: true
+        });
+      })
+      .then(function() {
+        process.chdir('./tmp');
 
-      var appsECLIPath = path.join(appName, 'node_modules', 'ember-cli');
-      var pwd = process.cwd();
+        var appsECLIPath = path.join(appName, 'node_modules', 'ember-cli');
+        var pwd = process.cwd();
 
-      fs.symlinkSync(path.join(pwd, '..'), appsECLIPath);
+        fs.symlinkSync(path.join(pwd, '..'), appsECLIPath);
 
-      process.chdir(appName);
-    });
+        process.chdir(appName);
+      });
   });
 
   afterEach(function() {
     this.timeout(10000);
 
     assertTmpEmpty();
-    tmp.teardown('./tmp');
+    return tmp.teardown('./tmp');
   });
 
   it('ember new foo, clean from scratch', function() {
@@ -101,6 +94,23 @@ describe('Acceptance: smoke-test', function() {
     this.timeout(450000);
 
     return copyFixtureFiles('smoke-tests/failing-test')
+      .then(function() {
+        return runCommand(path.join('.', 'node_modules', 'ember-cli', 'bin', 'ember'), 'test')
+          .then(function() {
+            assert(false, 'should have rejected with a failing test');
+          })
+          .catch(function(result) {
+            assert.equal(result.code, 1);
+          });
+      });
+  });
+
+  it('ember test exits with non-zero when no tests are run', function() {
+    console.log('    running the slow end-to-end it will take some time');
+
+    this.timeout(450000);
+
+    return copyFixtureFiles('smoke-tests/no-testem-launchers')
       .then(function() {
         return runCommand(path.join('.', 'node_modules', 'ember-cli', 'bin', 'ember'), 'test')
           .then(function() {

@@ -11,69 +11,81 @@ var assert     = require('assert');
 var EOL        = require('os').EOL;
 
 var runCommand       = require('../helpers/run-command');
+var buildApp         = require('../helpers/build-app');
 var copyFixtureFiles = require('../helpers/copy-fixture-files');
 
 var appName  = 'some-cool-app';
-
-function buildApp(appName) {
-  return runCommand(path.join('..', 'bin', 'ember'), 'new', appName, {
-    onOutput: function() {
-      return; // no output for initial application build
-    }
-  })
-  .catch(function(result) {
-    console.log(result.output.join('\n'));
-    console.log(result.errors.join('\n'));
-
-    throw result;
-  });
-}
 
 describe('Acceptance: brocfile-smoke-test', function() {
   before(function() {
     this.timeout(360000);
 
-    tmp.setup('./common-tmp');
-    process.chdir('./common-tmp');
-
-    conf.setup();
-    return buildApp(appName)
+    return tmp.setup('./common-tmp')
       .then(function() {
-        return rimraf(path.join(appName, 'node_modules', 'ember-cli'));
+        process.chdir('./common-tmp');
+
+        conf.setup();
+        return buildApp(appName)
+          .then(function() {
+            return rimraf(path.join(appName, 'node_modules', 'ember-cli'));
+          });
       });
   });
 
   after(function() {
     this.timeout(10000);
 
-    tmp.teardown('./common-tmp');
-    conf.restore();
+    return tmp.teardown('./common-tmp')
+      .then(function() {
+        conf.restore();
+      });
   });
 
   beforeEach(function() {
     this.timeout(10000);
 
-    tmp.setup('./tmp');
-    return ncp('./common-tmp/' + appName, './tmp/' + appName, {
-      clobber: true,
-      stopOnErr: true
-    })
-    .then(function() {
-      process.chdir('./tmp');
+    return tmp.setup('./tmp')
+      .then(function() {
+        return ncp('./common-tmp/' + appName, './tmp/' + appName, {
+          clobber: true,
+          stopOnErr: true
+        });
+      })
+      .then(function() {
+        process.chdir('./tmp');
 
-      var appsECLIPath = path.join(appName, 'node_modules', 'ember-cli');
-      var pwd = process.cwd();
+        var appsECLIPath = path.join(appName, 'node_modules', 'ember-cli');
+        var pwd = process.cwd();
 
-      fs.symlinkSync(path.join(pwd, '..'), appsECLIPath);
+        fs.symlinkSync(path.join(pwd, '..'), appsECLIPath);
 
-      process.chdir(appName);
-    });
+        process.chdir(appName);
+      });
   });
 
   afterEach(function() {
     this.timeout(10000);
 
-    tmp.teardown('./tmp');
+    return tmp.teardown('./tmp');
+  });
+
+  it('a custom EmberENV in config/environment.js is used for window.EmberENV', function() {
+    console.log('    running the slow end-to-end it will take some time');
+
+    this.timeout(450000);
+
+
+    return copyFixtureFiles('brocfile-tests/custom-ember-env')
+      .then(function() {
+        return runCommand(path.join('.', 'node_modules', 'ember-cli', 'bin', 'ember'), 'build');
+      })
+      .then(function() {
+        var vendorContents = fs.readFileSync(path.join('dist', 'assets', 'vendor.js'), { encoding: 'utf8' });
+
+        var expected = 'window.EmberENV = {"asdflkmawejf":";jlnu3yr23"};';
+
+        assert(vendorContents.indexOf(expected) > -1, 'EmberENV should be in assets/vendor.js');
+      });
   });
 
   it('using wrapInEval: true', function() {
@@ -123,6 +135,31 @@ describe('Acceptance: brocfile-smoke-test', function() {
       });
   });
 
+  it('addons can have a public tree that is merged and returned namespaced by default', function() {
+    console.log('    running the slow end-to-end it will take some time');
+
+    this.timeout(100000);
+
+    return copyFixtureFiles('brocfile-tests/public-tree')
+      .then(function() {
+        var packageJsonPath = path.join(__dirname, '..', '..', 'tmp', appName, 'package.json');
+        var packageJson = require(packageJsonPath);
+        packageJson.devDependencies['ember-random-addon'] = 'latest';
+
+        return fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson));
+      })
+      .then(function() {
+        return runCommand(path.join('.', 'node_modules', 'ember-cli', 'bin', 'ember'), 'build', {
+          verbose: true
+        });
+      })
+      .then(function() {
+        var subjectFileContents = fs.readFileSync(path.join('.', 'dist', 'ember-random-addon', 'some-root-file.txt'), { encoding: 'utf8' });
+
+        assert.equal(subjectFileContents, 'ROOT FILE' + EOL);
+      });
+  });
+
   it('using pods based templates', function() {
     console.log('    running the slow end-to-end it will take some time');
 
@@ -168,6 +205,34 @@ describe('Acceptance: brocfile-smoke-test', function() {
       })
       .then(function() {
         return runCommand(path.join('.', 'node_modules', 'ember-cli', 'bin', 'ember'), 'test');
+      });
+  });
+
+  it('specifying custom output paths works properly', function() {
+    console.log('    running the slow end-to-end it will take some time');
+
+    this.timeout(100000);
+
+    return copyFixtureFiles('brocfile-tests/custom-output-paths')
+      .then(function() {
+        return runCommand(path.join('.', 'node_modules', 'ember-cli', 'bin', 'ember'), 'build', {
+          verbose: true
+        });
+      })
+      .then(function() {
+        var files = [
+          '/css/app.css',
+          '/js/app.js',
+          '/css/vendor.css',
+          '/js/vendor.js',
+          '/css/test-support.css',
+          '/js/test-support.js'
+        ];
+
+        var basePath = path.join('.', 'dist');
+        files.forEach(function(file) {
+          assert(fs.existsSync(path.join(basePath, file)), file + ' exists');
+        });
       });
   });
 });
