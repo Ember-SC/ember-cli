@@ -101,7 +101,7 @@
     "broccoli-filter": "0.1.6",
     "broccoli-jshint": "0.5.1",
     "broccoli-kitchen-sink-helpers": "0.2.4",
-    "broccoli-petal": "git+https://github.com/Ember-SC/broccoli-petal.git",
+    "broccoli-petal": "abuiles/broccoli-petal.git",
     "broccoli-merge-trees": "0.1.4",
     "broccoli-sane-watcher": "0.0.6",
     "broccoli-static-compiler": "0.1.4",
